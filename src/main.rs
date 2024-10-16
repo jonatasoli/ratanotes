@@ -7,12 +7,20 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
     DefaultTerminal, Frame,
 };
-use std::{fs, io, path::PathBuf};
+use std::{env, fs, io, path::PathBuf};
 use tui_textarea::TextArea;
 
 fn main() -> io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+
     let mut terminal = ratatui::init();
-    let app_result = App::default().run(&mut terminal);
+    let mut app = App::new();
+
+    if args.len() > 1 {
+        let file_path = &args[1];
+        app.load_file(file_path.to_string());
+    }
+    let app_result = app.run(&mut terminal);
     ratatui::restore();
     app_result
 }
@@ -31,6 +39,7 @@ pub struct App {
     textarea: TextArea<'static>,
     folder_path: PathBuf,
     file_name_input: TextArea<'static>,
+    file_path_input: TextArea<'static>,
     input_mode: InputMode,
 }
 
@@ -50,6 +59,13 @@ impl App {
                 .title("Enter file name"),
         );
 
+        let mut file_path_input = TextArea::default();
+        file_path_input.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Enter file path"),
+        );
+
         // Set the initial folder to the current directory
         let folder_path = std::env::current_dir().unwrap();
         Self {
@@ -57,6 +73,7 @@ impl App {
             textarea,
             folder_path,
             file_name_input,
+            file_path_input,
             input_mode: InputMode::Editing,
         }
     }
@@ -122,6 +139,23 @@ impl App {
 
                 self.file_name_input.render(centered_chunk, frame.buffer_mut());
             }
+            InputMode::FilePath => {
+                let popup_layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(
+                        [
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(40),
+                        ]
+                        .as_ref(),
+                    )
+                    .split(area);
+
+                let centered_chunk = popup_layout[1];
+
+                self.file_path_input.render(centered_chunk, frame.buffer_mut());
+            }
         }
     }
 
@@ -146,6 +180,10 @@ impl App {
                     // Switch to FileName input mode when Ctrl+S is pressed
                     self.input_mode = InputMode::FileName;
                 }
+                KeyCode::Char('o') if key_event.modifiers == KeyModifiers::CONTROL => {
+                    // Switch to FilePath input mode when Ctrl+O is pressed
+                    self.input_mode = InputMode::FilePath;
+                }
                 _ => {
                     self.textarea.input(key_event);
                 }
@@ -165,6 +203,21 @@ impl App {
                     self.file_name_input.input(key_event);
                 }
             },
+            InputMode::FilePath => match key_event.code {
+                KeyCode::Enter => {
+                    // Load the file when Enter is pressed in FilePath input mode
+                    let file_path = self.file_path_input.lines().join("");
+                    self.load_file(file_path);
+                    self.input_mode = InputMode::Editing;
+                }
+                KeyCode::Esc => {
+                    // Cancel file path input and return to Editing mode
+                    self.input_mode = InputMode::Editing;
+                }
+                _ => {
+                    self.file_path_input.input(key_event);
+                }
+            },
         }
     }
 
@@ -182,6 +235,21 @@ impl App {
         match fs::write(&file_path, content) {
             Ok(_) => println!("File saved to {:?}", file_name),
             Err(e) => eprintln!("Failed to save file: {}", e),
+        }
+    }
+
+    fn load_file(&mut self, file_path: String) {
+        if file_path.is_empty() {
+            eprintln!("File path cannot be empty!");
+            return;
+        }
+
+        match fs::read_to_string(&file_path) {
+            Ok(content) => {
+                self.textarea = TextArea::new(content.lines().map(String::from).collect());
+                println!("File loaded: {:?}", file_path);
+            }
+            Err(e) => eprintln!("Failed to load file: {}", e),
         }
     }
 }
@@ -226,7 +294,7 @@ mod tests {
     #[test]
     fn handle_key_event() -> io::Result<()> {
         let mut app = App::default();
-        app.handle_key_event(KeyCode::Char('q').into());
+        app.handle_key_event(KeyCode::Esc.into());
         assert!(app.exit);
 
         Ok(())
